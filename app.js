@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'ES_ADJUSTMENT_WEBAPP_V3';
+const DEFAULT_PAGE = 'overview';
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -112,6 +113,7 @@ function init() {
   bindMeta();
   bindActions();
   bindSideMenu();
+  activatePage(DEFAULT_PAGE);
   render();
 }
 
@@ -270,12 +272,20 @@ function bindActions() {
 function bindSideMenu() {
   $$('#sideMenu .side-item').forEach((button) => {
     button.addEventListener('click', () => {
-      $$('#sideMenu .side-item').forEach((item) => item.classList.remove('active'));
-      button.classList.add('active');
-      const target = button.dataset.panel;
-      const panel = document.getElementById(`panel-${target}`);
-      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const nextPage = button.dataset.page || button.dataset.panel || DEFAULT_PAGE;
+      activatePage(nextPage);
     });
+  });
+}
+
+function activatePage(pageName) {
+  $$('#sideMenu .side-item').forEach((item) => {
+    const itemPage = item.dataset.page || item.dataset.panel;
+    item.classList.toggle('active', itemPage === pageName);
+  });
+
+  $$('.pageSection').forEach((section) => {
+    section.classList.toggle('is-active', section.id === `page-${pageName}`);
   });
 }
 
@@ -324,11 +334,7 @@ function calculateStats() {
     const baseIndex = parseNumber(item.baseIndex);
     const compareIndex = parseNumber(item.compareIndex);
     const coefficient = totalCost > 0 ? cost / totalCost : 0;
-
-    // 원본 ES추정산출기와 동일하게 기준지수 0 이하는 지수변동율을 1로 표시
     const fluctuationRate = baseIndex > 0 ? compareIndex / baseIndex : 1;
-
-    // 기준지수 0 이하는 조정계수 0 처리
     const adjustmentCoefficient = baseIndex > 0 ? coefficient * (fluctuationRate - 1) : 0;
 
     actualTotalCoefficient += coefficient;
@@ -348,7 +354,6 @@ function calculateStats() {
     };
   });
 
-  // 원본 화면 표시와 동일하게 총 적용대가가 있으면 계수 합계는 1.0000으로 표기
   const displayedTotalCoefficient = totalCost > 0 ? 1 : 0;
 
   return {
