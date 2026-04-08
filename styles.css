@@ -256,4 +256,34 @@ header.topbar .topInner{
   .main{padding:0!important;min-width:0!important}
   .card,.tableWrap{box-shadow:none!important}
   .app{display:block;min-width:0}
+  /* 인쇄 시 모든 페이지가 보이도록 설정 해제 */
+  .pageSection { display:block!important; opacity: 1!important; }
+}
+
+/* =========================================
+   여기에 SPA 페이지 전환을 위한 핵심 CSS가 추가되었습니다.
+   ========================================= */
+
+/* 비활성 페이지는 화면에서 완전히 제거합니다. */
+.pageSection {
+  display: none;
+  opacity: 0;
+}
+
+/* 활성 페이지만 보이고, 부드러운 전환 효과(페이드인)를 줍니다. */
+.pageSection.is-active {
+  display: block;
+  animation: pageFadeIn 0.3s ease-out forwards;
+}
+
+/* 페이지 전환 애니메이션 */
+@keyframes pageFadeIn {
+  0% { 
+    opacity: 0; 
+    transform: translateY(12px); 
+  }
+  100% { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
 }
