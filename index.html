@@ -222,19 +222,20 @@
               <div class="dashCardHead">
                 <div>
                   <button class="dashCardTitleLink" type="button">데이터 관리</button>
-                  <div class="dashCardSub">브라우저 저장 / JSON 입출력</div>
+                  <div class="dashCardSub">브라우저 저장 / 시트 내보내기 / JSON 백업</div>
                 </div>
               </div>
               <div class="stack gap10 no-print">
                 <div class="row wrap">
-                  <button id="exportBtn" class="btn" type="button">JSON 내보내기</button>
+                  <button id="exportExcelBtn" class="btn primary" type="button">Excel 내보내기</button>
+                  <button id="exportBtn" class="btn" type="button">JSON 백업</button>
                   <label class="btn fileBtn">
-                    JSON 불러오기
+                    JSON 복구
                     <input id="importInput" type="file" accept="application/json" hidden>
                   </label>
                   <button id="resetBtn" class="btn" type="button">초기화</button>
                 </div>
-                <div class="hintBox subtle">같은 브라우저에서는 자동 저장됩니다. GitHub Pages로 배포해도 별도 서버 없이 동작합니다.</div>
+                <div class="hintBox subtle">같은 브라우저에서는 자동 저장됩니다. Excel 내보내기를 통해 표 형태의 데이터로 저장할 수 있습니다.</div>
               </div>
             </article>
           </section>
