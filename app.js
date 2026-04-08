@@ -72,8 +72,8 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 const els = {
-  topTabs: $$('.topTab'),         // 추가
-  topPrintBtn: $('#topPrintBtn'), // 추가
+  topTabs: $$('.topTab'),
+  topPrintBtn: $('#topPrintBtn'),
   agency: $('#agency'),
   projectName: $('#projectName'),
   bidDate: $('#bidDate'),
@@ -98,6 +98,7 @@ const els = {
   addGroupBtn: $('#addGroupBtn'),
   addItemBtn: $('#addItemBtn'),
   validateBtn: $('#validateBtn'),
+  exportExcelBtn: $('#exportExcelBtn'), // Excel 내보내기 추가
   exportBtn: $('#exportBtn'),
   importInput: $('#importInput'),
   resetBtn: $('#resetBtn'),
@@ -121,25 +122,21 @@ function init() {
 
 function normalizeStateShape(rawState) {
   const next = clone(rawState);
-
   if (!next.meta || typeof next.meta !== 'object') {
     next.meta = clone(SAMPLE_STATE.meta);
   } else {
     next.meta = { ...clone(SAMPLE_STATE.meta), ...next.meta };
   }
-
   if (!Array.isArray(next.groups) || next.groups.length === 0) {
     next.groups = clone(SAMPLE_STATE.groups);
     return next;
   }
-
   next.groups = next.groups.map((group) => {
     const safeGroup = {
       id: group?.id || uid(),
       name: group?.name || '신규 비목군',
       items: Array.isArray(group?.items) && group.items.length > 0 ? group.items : [createNewItem()]
     };
-
     safeGroup.items = safeGroup.items.map((item) => ({
       id: item?.id || uid(),
       name: item?.name ?? '',
@@ -148,10 +145,8 @@ function normalizeStateShape(rawState) {
       compareIndex: parseNumber(item?.compareIndex),
       note: item?.note ?? ''
     }));
-
     return safeGroup;
   });
-
   return next;
 }
 
@@ -194,13 +189,10 @@ function bindActions() {
   els.saveBtn.addEventListener('click', () => saveState(true));
   els.printBtn.addEventListener('click', () => window.print());
   
-  // 상단 탭 이벤트 연동 추가
   if (els.topPrintBtn) els.topPrintBtn.addEventListener('click', () => window.print());
   els.topTabs.forEach(tab => {
     tab.addEventListener('click', (e) => {
-      if (e.target.dataset.target) {
-        activatePage(e.target.dataset.target);
-      }
+      if (e.target.dataset.target) activatePage(e.target.dataset.target);
     });
   });
 
@@ -236,11 +228,60 @@ function bindActions() {
     }
   });
 
+  // Excel 형식(CSV) 내보내기 (들여쓰기 적용)
+  els.exportExcelBtn.addEventListener('click', () => {
+    syncMetaFromFields();
+    const stats = calculateStats();
+    const computedMap = new Map(stats.computed.map(c => [c.key, c]));
+
+    // UTF-8 BOM 추가 (Excel 한글 깨짐 방지)
+    let csv = '\uFEFF';
+    
+    // 프로젝트 기본 정보 기록
+    csv += `수요기관,${escapeCsv(state.meta.agency)}\n`;
+    csv += `공사명,${escapeCsv(state.meta.projectName)}\n`;
+    csv += `입찰일,${escapeCsv(state.meta.bidDate)}\n`;
+    csv += `계약일,${escapeCsv(state.meta.contractDate)}\n`;
+    csv += `비교시점,${escapeCsv(state.meta.compareDate)}\n\n`;
+
+    // 테이블 헤더
+    csv += '비목 / 비목군,물가변동 적용대가,계수(①),기준시점 지수(②),비교시점 지수(③),지수변동율(④),조정계수(⑤),비고\n';
+
+    // 테이블 데이터 반복
+    state.groups.forEach((group) => {
+      const subtotalCost = (group.items || []).reduce((sum, item) => sum + parseNumber(item.cost), 0);
+      const subtotalCoefficient = stats.totalCost > 0 ? subtotalCost / stats.totalCost : 0;
+      
+      // 비목군 출력 (구분을 위해 대괄호 표기)
+      csv += `${escapeCsv('[' + group.name + ']')},${subtotalCost},${formatFixed(subtotalCoefficient)},,,,,\n`;
+
+      group.items.forEach((item) => {
+        const computed = computedMap.get(`${group.id}:${item.id}`);
+        // 들여쓰기: 하위 비목명은 앞에 공백 4칸을 두어 Excel에서 들여쓰기 되도록 적용
+        const indentedName = `    ${item.name}`;
+        
+        csv += `${escapeCsv(indentedName)},${item.cost},${formatFixed(computed.coefficient)},${item.baseIndex},${item.compareIndex},${formatFixed(computed.fluctuationRate)},${formatFixed(computed.adjustmentCoefficient)},${escapeCsv(item.note)}\n`;
+      });
+    });
+
+    // 푸터 데이터
+    csv += `\n총 계,${stats.totalCost},${formatFixed(stats.displayedTotalCoefficient)},,,최종 ES 추정치,${formatFixed(stats.finalES * 100)}%,\n`;
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const fileName = (state.meta.projectName || 'ES_조정율_산출기').replace(/[\\/:*?"<>|]/g, '_') + '.csv';
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
+
+  // 기존 JSON 내보내기 (백업용)
   els.exportBtn.addEventListener('click', () => {
     syncMetaFromFields();
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
-    const fileName = (state.meta.projectName || 'ES_조정율_산출기').replace(/[\\/:*?"<>|]/g, '_') + '.json';
+    const fileName = (state.meta.projectName || 'ES_조정율_산출기_백업').replace(/[\\/:*?"<>|]/g, '_') + '.json';
     link.href = URL.createObjectURL(blob);
     link.download = fileName;
     link.click();
@@ -258,9 +299,9 @@ function bindActions() {
       refreshMetaFields();
       render();
       saveState(false);
-      toast('JSON 데이터를 불러왔습니다.');
+      toast('JSON 데이터를 복구했습니다.');
     } catch (error) {
-      showModal('불러오기 실패', '유효한 JSON 파일이 아닙니다.');
+      showModal('불러오기 실패', '유효한 JSON 백업 파일이 아닙니다.');
     } finally {
       event.target.value = '';
     }
@@ -290,15 +331,11 @@ function bindSideMenu() {
   });
 }
 
-// 수정됨: 실제 페이지 교체 및 탭 동기화 로직
 function activatePage(pageName) {
-  // 1. 좌측 메뉴 동기화
   $$('#sideMenu .side-item').forEach((item) => {
     const itemPage = item.dataset.page || item.dataset.panel;
     item.classList.toggle('active', itemPage === pageName);
   });
-
-  // 2. 상단 탭 동기화
   els.topTabs.forEach((tab) => {
     if (!tab.dataset.target) return;
     if (pageName === 'overview' || pageName === 'table' || pageName === 'data') {
@@ -307,13 +344,9 @@ function activatePage(pageName) {
       tab.classList.toggle('active', tab.dataset.target === 'review');
     }
   });
-
-  // 3. 페이지 섹션 보이기/숨기기 전환
   $$('.pageSection').forEach((section) => {
     section.classList.toggle('is-active', section.id === `page-${pageName}`);
   });
-
-  // 4. 페이지 이동 시 스크롤을 최상단으로 (SPA 느낌 강화)
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -346,6 +379,16 @@ function formatNumber(value) {
 
 function formatFixed(value, digits = 4) {
   return parseNumber(value).toFixed(digits);
+}
+
+// CSV용 이스케이프 함수
+function escapeCsv(str) {
+  if (str === null || str === undefined) return '';
+  const s = String(str);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
 }
 
 function calculateStats() {
@@ -497,7 +540,6 @@ function bindTableInputs() {
   $$('#tableBody [data-role]').forEach((input) => {
     input.addEventListener('input', handleInputChange);
   });
-
   $$('#tableBody [data-action]').forEach((button) => {
     button.addEventListener('click', handleTableAction);
   });
@@ -508,26 +550,16 @@ function handleInputChange(event) {
   const groupIndex = Number(event.target.dataset.groupIndex);
   const itemIndex = Number(event.target.dataset.itemIndex);
 
-  if (role === 'group-name') {
-    state.groups[groupIndex].name = event.target.value;
-  }
-  if (role === 'item-name') {
-    state.groups[groupIndex].items[itemIndex].name = event.target.value;
-  }
-  if (role === 'item-note') {
-    state.groups[groupIndex].items[itemIndex].note = event.target.value;
-  }
+  if (role === 'group-name') state.groups[groupIndex].name = event.target.value;
+  if (role === 'item-name') state.groups[groupIndex].items[itemIndex].name = event.target.value;
+  if (role === 'item-note') state.groups[groupIndex].items[itemIndex].note = event.target.value;
   if (role === 'item-cost') {
     const cleaned = event.target.value.replace(/[^0-9.-]/g, '');
     state.groups[groupIndex].items[itemIndex].cost = parseNumber(cleaned);
     event.target.value = cleaned ? formatNumber(cleaned) : '';
   }
-  if (role === 'item-base') {
-    state.groups[groupIndex].items[itemIndex].baseIndex = parseNumber(event.target.value.replace(/[^0-9.-]/g, ''));
-  }
-  if (role === 'item-compare') {
-    state.groups[groupIndex].items[itemIndex].compareIndex = parseNumber(event.target.value.replace(/[^0-9.-]/g, ''));
-  }
+  if (role === 'item-base') state.groups[groupIndex].items[itemIndex].baseIndex = parseNumber(event.target.value.replace(/[^0-9.-]/g, ''));
+  if (role === 'item-compare') state.groups[groupIndex].items[itemIndex].compareIndex = parseNumber(event.target.value.replace(/[^0-9.-]/g, ''));
 
   render();
   saveState(false);
@@ -538,24 +570,15 @@ function handleTableAction(event) {
   const groupIndex = Number(event.target.dataset.groupIndex);
   const itemIndex = Number(event.target.dataset.itemIndex);
 
-  if (action === 'add-item') {
-    state.groups[groupIndex].items.push(createNewItem());
-  }
-
+  if (action === 'add-item') state.groups[groupIndex].items.push(createNewItem());
   if (action === 'delete-item') {
     state.groups[groupIndex].items.splice(itemIndex, 1);
-    if (state.groups[groupIndex].items.length === 0) {
-      state.groups[groupIndex].items.push(createNewItem());
-    }
+    if (state.groups[groupIndex].items.length === 0) state.groups[groupIndex].items.push(createNewItem());
   }
-
   if (action === 'delete-group') {
     state.groups.splice(groupIndex, 1);
-    if (state.groups.length === 0) {
-      state.groups.push(createNewGroup());
-    }
+    if (state.groups.length === 0) state.groups.push(createNewGroup());
   }
-
   render();
   saveState(false);
 }
@@ -565,9 +588,7 @@ function toast(message) {
   item.className = 't';
   item.textContent = message;
   els.toastHost.appendChild(item);
-  setTimeout(() => {
-    item.remove();
-  }, 2200);
+  setTimeout(() => item.remove(), 2200);
 }
 
 function showModal(title, text) {
