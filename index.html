@@ -21,7 +21,7 @@
       </div>
       <div class="topCenter">
         <nav id="topTabs" class="topTabs" aria-label="주요 탭">
-          <button class="topTab" type="button" data-target="overview">산출표</button>
+          <button class="topTab active" type="button" data-target="overview">산출표</button>
           <button class="topTab" type="button" data-target="review">검토현황</button>
           <button class="topTab" type="button" id="topPrintBtn">출력</button>
         </nav>
@@ -67,14 +67,15 @@
           <div class="sectionTitle">검토 상태</div>
         </div>
         <div id="statusBox" class="statusBox">입력 대기</div>
-        <div class="sideHint">총 적용대가, 기준지수 0 여부 등을 기준으로 상태를 표시합니다.</div>
+        <div class="sideHint">총 적용대가, 기준지수 0 여부, 비목명 누락 여부를 기준으로 상태를 표시합니다.</div>
       </section>
     </aside>
 
-    <main class="main" id="mainContent">
-      <div class="viewPages">
+    <main class="main">
+      <div class="view viewPages">
+
         <section class="pageSection is-active" id="page-overview">
-          <section class="card heroCard">
+          <section class="card heroCard" id="panel-overview">
             <div class="heroHead">
               <div>
                 <div class="heroTitle">ES 조정율 산출기</div>
@@ -109,18 +110,18 @@
             <article class="card dashCard">
               <div class="dashCardHead">
                 <div>
-                  <div class="dashCardTitleLink">기본 정보</div>
+                  <button class="dashCardTitleLink" type="button">기본 정보</button>
                   <div class="dashCardSub">문서 메타 정보 및 기준일 관리</div>
                 </div>
               </div>
               <div class="formGrid metaGrid">
                 <label class="fieldLabel">
                   <span>수요기관</span>
-                  <input id="agency" class="field" type="text" placeholder="수요기관명">
+                  <input id="agency" class="field" type="text" placeholder="수요기관명을 입력하세요">
                 </label>
                 <label class="fieldLabel">
                   <span>공사명</span>
-                  <input id="projectName" class="field" type="text" placeholder="공사명">
+                  <input id="projectName" class="field" type="text" placeholder="공사명을 입력하세요">
                 </label>
                 <label class="fieldLabel">
                   <span>입찰일</span>
@@ -140,7 +141,7 @@
             <article class="card dashCard">
               <div class="dashCardHead">
                 <div>
-                  <div class="dashCardTitleLink">계산식</div>
+                  <button class="dashCardTitleLink" type="button">계산식</button>
                   <div class="dashCardSub">현재 계산 로직</div>
                 </div>
               </div>
@@ -150,23 +151,25 @@
                 <div class="formulaItem"><strong>조정계수(⑤)</strong> = 계수 × (지수변동율 - 1)</div>
                 <div class="formulaItem"><strong>최종 ES 추정치</strong> = Σ 조정계수 × 100(%)</div>
               </div>
+              <div class="hintBox">날짜 입력은 기록 및 문서 관리용이며, 외부 지수 자동 조회는 아직 연결하지 않았습니다.</div>
             </article>
           </section>
         </section>
 
         <section class="pageSection" id="page-table">
-          <section class="card">
+          <section class="card" id="panel-table">
             <div class="dashCardHead">
               <div>
-                <div class="dashCardTitleLink">산출 입력</div>
-                <div class="dashCardSub">비목군, 비목, 지수 등을 수정하세요.</div>
+                <button class="dashCardTitleLink" type="button">산출 입력</button>
+                <div class="dashCardSub">비목군, 비목, 지수, 비고를 자유롭게 수정할 수 있습니다.</div>
               </div>
               <div class="row no-print wrap">
                 <button id="addGroupBtn" class="btn" type="button">+ 비목군 추가</button>
-                <button id="addItemBtn" class="btn primary" type="button">+ 직접공사비 추가</button>
+                <button id="addItemBtn" class="btn primary" type="button">+ 직접공사비 비목 추가</button>
                 <button id="validateBtn" class="btn" type="button">계수 검토</button>
               </div>
             </div>
+
             <div class="tableWrap">
               <table class="esTable">
                 <thead>
@@ -174,9 +177,9 @@
                     <th>비목 / 비목군</th>
                     <th>물가변동 적용대가</th>
                     <th>계수(①)</th>
-                    <th>기준지수(②)</th>
-                    <th>비교지수(③)</th>
-                    <th>변동율(④)</th>
+                    <th>기준시점 지수(②)</th>
+                    <th>비교시점 지수(③)</th>
+                    <th>지수변동율(④)</th>
                     <th>조정계수(⑤)</th>
                     <th>비고</th>
                     <th class="no-print">관리</th>
@@ -200,42 +203,49 @@
         </section>
 
         <section class="pageSection" id="page-review">
-          <section class="card">
-            <div class="dashCardHead">
-              <div>
-                <div class="dashCardTitleLink">검토 메모</div>
-                <div class="dashCardSub">특이사항 및 근거 기록</div>
+          <section class="dashGrid singleGrid">
+            <article class="card dashCard" id="panel-review">
+              <div class="dashCardHead">
+                <div>
+                  <button class="dashCardTitleLink" type="button">검토 메모</button>
+                  <div class="dashCardSub">발주처 기준, 제외 항목, 검토 사항 기록</div>
+                </div>
               </div>
-            </div>
-            <textarea id="memo" class="field memoField" placeholder="근거, 지수 출처 등을 기록하세요."></textarea>
+              <textarea id="memo" class="field memoField" placeholder="근거, 지수 출처, 제외 기준, 협의 사항 등을 기록하세요."></textarea>
+            </article>
           </section>
         </section>
 
         <section class="pageSection" id="page-data">
-          <section class="card">
-            <div class="dashCardHead">
-              <div>
-                <div class="dashCardTitleLink">데이터 관리</div>
-                <div class="dashCardSub">브라우저 저장 및 파일 입출력</div>
+          <section class="dashGrid singleGrid">
+            <article class="card dashCard" id="panel-data">
+              <div class="dashCardHead">
+                <div>
+                  <button class="dashCardTitleLink" type="button">데이터 관리</button>
+                  <div class="dashCardSub">브라우저 저장 / JSON 입출력</div>
+                </div>
               </div>
-            </div>
-            <div class="stack gap10 no-print">
-              <div class="row wrap">
-                <button id="exportBtn" class="btn" type="button">JSON 내보내기</button>
-                <label class="btn fileBtn">
-                  JSON 불러오기
-                  <input id="importInput" type="file" accept="application/json" hidden>
-                </label>
-                <button id="resetBtn" class="btn" type="button">초기화</button>
+              <div class="stack gap10 no-print">
+                <div class="row wrap">
+                  <button id="exportBtn" class="btn" type="button">JSON 내보내기</button>
+                  <label class="btn fileBtn">
+                    JSON 불러오기
+                    <input id="importInput" type="file" accept="application/json" hidden>
+                  </label>
+                  <button id="resetBtn" class="btn" type="button">초기화</button>
+                </div>
+                <div class="hintBox subtle">같은 브라우저에서는 자동 저장됩니다. GitHub Pages로 배포해도 별도 서버 없이 동작합니다.</div>
               </div>
-            </div>
+            </article>
           </section>
         </section>
+
       </div>
     </main>
   </div>
 
   <div id="toastHost" class="toastHost"></div>
+
   <div id="modalBackdrop" class="modalBackdrop hidden">
     <div class="modal">
       <div class="modalHead">
