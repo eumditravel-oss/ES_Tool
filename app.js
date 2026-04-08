@@ -8,6 +8,25 @@ function clone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+function createNewItem(name = '신규 비목') {
+  return {
+    id: uid(),
+    name,
+    cost: 0,
+    baseIndex: 0,
+    compareIndex: 0,
+    note: ''
+  };
+}
+
+function createNewGroup(name = '신규 비목군') {
+  return {
+    id: uid(),
+    name,
+    items: [createNewItem()]
+  };
+}
+
 const SAMPLE_STATE = {
   meta: {
     agency: '',
@@ -96,13 +115,49 @@ function init() {
   render();
 }
 
+function normalizeStateShape(rawState) {
+  const next = clone(rawState);
+
+  if (!next.meta || typeof next.meta !== 'object') {
+    next.meta = clone(SAMPLE_STATE.meta);
+  } else {
+    next.meta = { ...clone(SAMPLE_STATE.meta), ...next.meta };
+  }
+
+  if (!Array.isArray(next.groups) || next.groups.length === 0) {
+    next.groups = clone(SAMPLE_STATE.groups);
+    return next;
+  }
+
+  next.groups = next.groups.map((group) => {
+    const safeGroup = {
+      id: group?.id || uid(),
+      name: group?.name || '신규 비목군',
+      items: Array.isArray(group?.items) && group.items.length > 0 ? group.items : [createNewItem()]
+    };
+
+    safeGroup.items = safeGroup.items.map((item) => ({
+      id: item?.id || uid(),
+      name: item?.name ?? '',
+      cost: parseNumber(item?.cost),
+      baseIndex: parseNumber(item?.baseIndex),
+      compareIndex: parseNumber(item?.compareIndex),
+      note: item?.note ?? ''
+    }));
+
+    return safeGroup;
+  });
+
+  return next;
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return clone(SAMPLE_STATE);
     const parsed = JSON.parse(raw);
     if (!parsed || !Array.isArray(parsed.groups)) return clone(SAMPLE_STATE);
-    return parsed;
+    return normalizeStateShape(parsed);
   } catch (error) {
     return clone(SAMPLE_STATE);
   }
@@ -144,11 +199,7 @@ function bindActions() {
   });
 
   els.addGroupBtn.addEventListener('click', () => {
-    state.groups.push({
-      id: uid(),
-      name: '신규 비목군',
-      items: [{ id: uid(), name: '신규 비목', cost: 0, baseIndex: 100, compareIndex: 100, note: '' }]
-    });
+    state.groups.push(createNewGroup());
     render();
     saveState(false);
   });
@@ -156,7 +207,7 @@ function bindActions() {
   els.addItemBtn.addEventListener('click', () => {
     const directGroup = state.groups.find((group) => group.name === '직접공사비') || state.groups[0];
     if (!directGroup) return;
-    directGroup.items.push({ id: uid(), name: '신규 비목', cost: 0, baseIndex: 100, compareIndex: 100, note: '' });
+    directGroup.items.push(createNewItem());
     render();
     saveState(false);
   });
@@ -189,7 +240,7 @@ function bindActions() {
       const text = await file.text();
       const parsed = JSON.parse(text);
       if (!parsed || !Array.isArray(parsed.groups)) throw new Error('invalid');
-      state = parsed;
+      state = normalizeStateShape(parsed);
       refreshMetaFields();
       render();
       saveState(false);
@@ -263,7 +314,7 @@ function calculateStats() {
   const flatItems = state.groups.flatMap((group) => (group.items || []).map((item) => ({ group, item })));
   const totalCost = flatItems.reduce((sum, entry) => sum + parseNumber(entry.item.cost), 0);
 
-  let totalCoefficient = 0;
+  let actualTotalCoefficient = 0;
   let finalES = 0;
   let zeroBaseCount = 0;
   let emptyNameCount = 0;
@@ -273,10 +324,14 @@ function calculateStats() {
     const baseIndex = parseNumber(item.baseIndex);
     const compareIndex = parseNumber(item.compareIndex);
     const coefficient = totalCost > 0 ? cost / totalCost : 0;
-    const fluctuationRate = baseIndex > 0 ? compareIndex / baseIndex : 0;
+
+    // 원본 ES추정산출기와 동일하게 기준지수 0 이하는 지수변동율을 1로 표시
+    const fluctuationRate = baseIndex > 0 ? compareIndex / baseIndex : 1;
+
+    // 기준지수 0 이하는 조정계수 0 처리
     const adjustmentCoefficient = baseIndex > 0 ? coefficient * (fluctuationRate - 1) : 0;
 
-    totalCoefficient += coefficient;
+    actualTotalCoefficient += coefficient;
     finalES += adjustmentCoefficient;
 
     if (baseIndex <= 0) zeroBaseCount += 1;
@@ -293,9 +348,13 @@ function calculateStats() {
     };
   });
 
+  // 원본 화면 표시와 동일하게 총 적용대가가 있으면 계수 합계는 1.0000으로 표기
+  const displayedTotalCoefficient = totalCost > 0 ? 1 : 0;
+
   return {
     totalCost,
-    totalCoefficient,
+    actualTotalCoefficient,
+    displayedTotalCoefficient,
     finalES,
     zeroBaseCount,
     emptyNameCount,
@@ -306,7 +365,9 @@ function calculateStats() {
 function buildValidationMessages(stats) {
   const messages = [];
   if (stats.totalCost <= 0) messages.push('- 총 적용대가가 0입니다.');
-  if (Math.abs(stats.totalCoefficient - 1) > 0.0001 && stats.totalCost > 0) messages.push('- 계수 합계가 1.0000이 아닙니다.');
+  if (Math.abs(stats.actualTotalCoefficient - 1) > 0.0001 && stats.totalCost > 0) {
+    messages.push('- 계수 합계가 1.0000이 아닙니다.');
+  }
   if (stats.zeroBaseCount > 0) messages.push(`- 기준지수가 0인 비목 ${stats.zeroBaseCount}건이 있습니다.`);
   if (stats.emptyNameCount > 0) messages.push(`- 비목명 미입력 ${stats.emptyNameCount}건이 있습니다.`);
   return messages;
@@ -342,7 +403,7 @@ function render(showToastOnSave = false) {
     group.items.forEach((item, itemIndex) => {
       const computed = computedMap.get(`${group.id}:${item.id}`) || {
         coefficient: 0,
-        fluctuationRate: 0,
+        fluctuationRate: 1,
         adjustmentCoefficient: 0
       };
       const signClass = computed.adjustmentCoefficient < 0 ? 'value-negative' : 'value-positive';
@@ -366,10 +427,10 @@ function render(showToastOnSave = false) {
   bindTableInputs();
 
   els.kpiTotalCost.textContent = formatNumber(stats.totalCost);
-  els.kpiCoefficient.textContent = formatFixed(stats.totalCoefficient);
+  els.kpiCoefficient.textContent = formatFixed(stats.displayedTotalCoefficient);
   els.kpiES.textContent = `${formatFixed(stats.finalES * 100)}%`;
   els.tfootTotalCost.textContent = formatNumber(stats.totalCost);
-  els.tfootCoefficient.textContent = formatFixed(stats.totalCoefficient);
+  els.tfootCoefficient.textContent = formatFixed(stats.displayedTotalCoefficient);
   els.tfootES.textContent = `${formatFixed(stats.finalES * 100)}%`;
   els.summaryAgency.textContent = state.meta.agency || '-';
   els.summaryProject.textContent = state.meta.projectName || '-';
@@ -445,20 +506,20 @@ function handleTableAction(event) {
   const itemIndex = Number(event.target.dataset.itemIndex);
 
   if (action === 'add-item') {
-    state.groups[groupIndex].items.push({ id: uid(), name: '신규 비목', cost: 0, baseIndex: 100, compareIndex: 100, note: '' });
+    state.groups[groupIndex].items.push(createNewItem());
   }
 
   if (action === 'delete-item') {
     state.groups[groupIndex].items.splice(itemIndex, 1);
     if (state.groups[groupIndex].items.length === 0) {
-      state.groups[groupIndex].items.push({ id: uid(), name: '신규 비목', cost: 0, baseIndex: 100, compareIndex: 100, note: '' });
+      state.groups[groupIndex].items.push(createNewItem());
     }
   }
 
   if (action === 'delete-group') {
     state.groups.splice(groupIndex, 1);
     if (state.groups.length === 0) {
-      state.groups.push({ id: uid(), name: '신규 비목군', items: [{ id: uid(), name: '신규 비목', cost: 0, baseIndex: 100, compareIndex: 100, note: '' }] });
+      state.groups.push(createNewGroup());
     }
   }
 
