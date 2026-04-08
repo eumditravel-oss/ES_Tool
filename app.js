@@ -72,6 +72,8 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 const els = {
+  topTabs: $$('.topTab'),         // 추가
+  topPrintBtn: $('#topPrintBtn'), // 추가
   agency: $('#agency'),
   projectName: $('#projectName'),
   bidDate: $('#bidDate'),
@@ -191,6 +193,16 @@ function bindMeta() {
 function bindActions() {
   els.saveBtn.addEventListener('click', () => saveState(true));
   els.printBtn.addEventListener('click', () => window.print());
+  
+  // 상단 탭 이벤트 연동 추가
+  if (els.topPrintBtn) els.topPrintBtn.addEventListener('click', () => window.print());
+  els.topTabs.forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      if (e.target.dataset.target) {
+        activatePage(e.target.dataset.target);
+      }
+    });
+  });
 
   els.loadSampleBtn.addEventListener('click', () => {
     state = clone(SAMPLE_STATE);
@@ -278,15 +290,31 @@ function bindSideMenu() {
   });
 }
 
+// 수정됨: 실제 페이지 교체 및 탭 동기화 로직
 function activatePage(pageName) {
+  // 1. 좌측 메뉴 동기화
   $$('#sideMenu .side-item').forEach((item) => {
     const itemPage = item.dataset.page || item.dataset.panel;
     item.classList.toggle('active', itemPage === pageName);
   });
 
+  // 2. 상단 탭 동기화
+  els.topTabs.forEach((tab) => {
+    if (!tab.dataset.target) return;
+    if (pageName === 'overview' || pageName === 'table' || pageName === 'data') {
+      tab.classList.toggle('active', tab.dataset.target === 'overview');
+    } else if (pageName === 'review') {
+      tab.classList.toggle('active', tab.dataset.target === 'review');
+    }
+  });
+
+  // 3. 페이지 섹션 보이기/숨기기 전환
   $$('.pageSection').forEach((section) => {
     section.classList.toggle('is-active', section.id === `page-${pageName}`);
   });
+
+  // 4. 페이지 이동 시 스크롤을 최상단으로 (SPA 느낌 강화)
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function syncMetaFromFields() {
