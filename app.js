@@ -4784,3 +4784,906 @@ _r.render(React.createElement(App));
     document.getElementById('pwa-manifest').setAttribute('href',URL.createObjectURL(b));
   }catch(e){}
 })();
+
+
+/* ===== meeting reflected override app: rendered after original full code ===== */
+/* ESC 물가변동 추정산출 플랫폼 — 회의 반영 전체 app.js
+   반영 핵심:
+   1) 사용자가 접속한 오늘 날짜를 비교시점 기본값으로 사용
+   2) 90일 경과 + 3% 이상을 동시에 판단
+   3) 도급내역서상 원가 배분 입력
+   4) 기준시점/비교시점 지수를 DB에서 끌고 오는 구조를 화면화
+   5) 관리자 모드에서 노무비·기계경비·표준시장단가 수기관리, PPI/API 자동갱신 표현
+   6) 추정산출은 공개 웹, 정식 보고서는 의뢰하기로 연결
+   7) 계약서/원가계산서 업로드 OCR 흐름과 로컬 저장 흐름 반영
+*/
+(function(){
+  'use strict';
+
+  const KRW = new Intl.NumberFormat('ko-KR');
+  const pct = (v, d=2) => `${Number(v || 0).toFixed(d)}%`;
+  const won = v => `${KRW.format(Math.round(Number(v || 0)))}원`;
+  const today = new Date();
+  const todayISO = today.toISOString().slice(0,10);
+
+  const DB_KEY = 'concost_esc_platform_state_v2';
+
+  const defaultState = {
+    activeSection:'estimate',
+    adminLogged:false,
+    adminTab:'indices',
+    project:{
+      projectName:'○○시설 신축공사',
+      client:'○○건설',
+      demandOrg:'○○시청',
+      contractor:'○○건설 주식회사',
+      contractNo:'CN-2026-ESC-001',
+      bidDate:'2023-12-15',
+      contractDate:'2024-01-10',
+      baseDate:'2023-12-15',
+      compareDate:todayISO,
+      managerName:'현장 담당자',
+      managerPhone:'010-0000-0000',
+      managerEmail:'site@example.com',
+      memo:'추정산출 결과는 사전 검토용이며, 정식 보고서 산출은 별도 의뢰가 필요합니다.'
+    },
+    costItems:[
+      {id:'labor', label:'노무비', source:'관리자 수기입력', amount:850000000, base:126.40, current:131.85, cycle:'연 2회'},
+      {id:'material', label:'재료비(PPI)', source:'한국은행 API', amount:1620000000, base:118.70, current:124.95, cycle:'매월'},
+      {id:'machine', label:'기계경비', source:'관리자 수기입력', amount:380000000, base:112.10, current:116.20, cycle:'연 1회'},
+      {id:'standard', label:'표준시장단가', source:'관리자 수기입력', amount:450000000, base:109.30, current:113.80, cycle:'연 2회'},
+      {id:'expense', label:'재경비율', source:'조달청/관리자', amount:260000000, base:104.50, current:107.10, cycle:'연 1회'},
+      {id:'etc', label:'기타 원가항목', source:'수기보정', amount:140000000, base:100.00, current:101.60, cycle:'필요 시'}
+    ],
+    dbSources:[
+      {name:'한국은행 생산자물가지수(PPI)', method:'API 자동연동', cycle:'매월', status:'연동 예정', note:'재료비 지수의 월별 자동 갱신 대상'},
+      {name:'노무비', method:'관리자 수기입력', cycle:'연 2회', status:'수기관리', note:'1월/하반기 발표값 반영'},
+      {name:'기계경비', method:'관리자 수기입력', cycle:'연 1회', status:'수기관리', note:'연초 발표값 반영'},
+      {name:'표준시장단가', method:'관리자 수기입력', cycle:'연 2회', status:'수기관리', note:'상·하반기 갱신'},
+      {name:'재경비율', method:'조달청/관리자 보정', cycle:'연 1회', status:'검토필요', note:'API 제공 여부 확인 후 자동/수기 결정'}
+    ],
+    savedProjects:[],
+    requests:[
+      {date:'2026-04-27', site:'샘플 현장', rate:'3.42%', type:'보고서 의뢰 검토', contact:'site@example.com'}
+    ],
+    membership:{
+      enabled:true,
+      basicPrice:20000,
+      proPrice:30000,
+      reportNormal:3000000,
+      reportMember:2000000
+    }
+  };
+
+  let state = loadState();
+
+  function clone(obj){ return JSON.parse(JSON.stringify(obj)); }
+
+  function loadState(){
+    try{
+      const saved = localStorage.getItem(DB_KEY);
+      if(!saved) return clone(defaultState);
+      const parsed = JSON.parse(saved);
+      return {
+        ...clone(defaultState),
+        ...parsed,
+        project:{...clone(defaultState).project, ...(parsed.project || {})},
+        costItems:Array.isArray(parsed.costItems) ? parsed.costItems : clone(defaultState).costItems,
+        dbSources:Array.isArray(parsed.dbSources) ? parsed.dbSources : clone(defaultState).dbSources,
+        savedProjects:Array.isArray(parsed.savedProjects) ? parsed.savedProjects : [],
+        requests:Array.isArray(parsed.requests) ? parsed.requests : clone(defaultState).requests,
+        membership:{...clone(defaultState).membership, ...(parsed.membership || {})}
+      };
+    }catch(e){
+      return clone(defaultState);
+    }
+  }
+
+  function saveState(){
+    localStorage.setItem(DB_KEY, JSON.stringify(state));
+  }
+
+  function daysBetween(a,b){
+    const d1 = new Date(a);
+    const d2 = new Date(b);
+    if(Number.isNaN(d1.getTime()) || Number.isNaN(d2.getTime())) return 0;
+    return Math.floor((d2 - d1) / 86400000);
+  }
+
+  function itemRate(item){
+    const base = Number(item.base || 0);
+    const current = Number(item.current || 0);
+    if(!base) return 0;
+    return ((current - base) / base) * 100;
+  }
+
+  function calc(){
+    const total = state.costItems.reduce((s,i)=>s+Number(i.amount || 0),0);
+    const weighted = state.costItems.reduce((s,i)=>{
+      const amount = Number(i.amount || 0);
+      const share = total ? amount / total : 0;
+      return s + share * itemRate(i);
+    },0);
+    const passedDays = daysBetween(state.project.contractDate, state.project.compareDate);
+    const passed90 = passedDays >= 90;
+    const passed3 = weighted >= 3;
+    const eligible = passed90 && passed3;
+    const estimatedAmount = total * weighted / 100;
+    return {total, weighted, passedDays, passed90, passed3, eligible, estimatedAmount};
+  }
+
+  function setSection(section){
+    state.activeSection = section;
+    saveState();
+    render();
+  }
+
+  function setAdminTab(tab){
+    state.adminTab = tab;
+    saveState();
+    render();
+  }
+
+  function updateProject(key, value){
+    state.project[key] = value;
+    saveState();
+    renderResultOnly();
+  }
+
+  function updateCost(index, key, value){
+    const item = state.costItems[index];
+    if(!item) return;
+    if(['amount','base','current'].includes(key)) item[key] = Number(String(value).replace(/,/g,'')) || 0;
+    else item[key] = value;
+    saveState();
+    render();
+  }
+
+  function updateSource(index, key, value){
+    if(!state.dbSources[index]) return;
+    state.dbSources[index][key] = value;
+    saveState();
+    render();
+  }
+
+  function addCostItem(){
+    state.costItems.push({id:'custom'+Date.now(), label:'신규 원가항목', source:'수기입력', amount:0, base:100, current:100, cycle:'필요 시'});
+    saveState();
+    render();
+  }
+
+  function removeCostItem(index){
+    if(state.costItems.length <= 1){
+      toast('최소 1개 항목은 유지해야 합니다.');
+      return;
+    }
+    state.costItems.splice(index,1);
+    saveState();
+    render();
+  }
+
+  function syncApiMock(){
+    state.costItems = state.costItems.map(item=>{
+      if(item.source.includes('한국은행')){
+        return {...item, current: Number((Number(item.current) + 0.35).toFixed(2))};
+      }
+      return item;
+    });
+    const target = state.dbSources.find(s=>s.name.includes('한국은행'));
+    if(target) target.status = '최근 동기화 완료';
+    saveState();
+    render();
+    toast('한국은행 PPI API 연동값을 샘플 동기화했습니다.');
+  }
+
+  function manualIndexUpdate(){
+    state.dbSources.forEach(s=>{
+      if(s.method.includes('수기')) s.status = '관리자 확인 완료';
+    });
+    saveState();
+    render();
+    toast('관리자 수기 지수 관리 상태를 갱신했습니다.');
+  }
+
+  function saveProject(){
+    const c = calc();
+    state.savedProjects.unshift({
+      id:Date.now(),
+      date:new Date().toLocaleString('ko-KR'),
+      projectName:state.project.projectName,
+      client:state.project.client,
+      rate:pct(c.weighted),
+      eligible:c.eligible ? '대상 가능' : '대상 미충족',
+      amount:won(c.estimatedAmount),
+      contact:state.project.managerEmail
+    });
+    saveState();
+    render();
+    toast('현재 추정산출 자료를 로컬 저장소에 저장했습니다.');
+  }
+
+  function requestReport(){
+    const c = calc();
+    const item = {
+      date:new Date().toISOString().slice(0,10),
+      site:state.project.projectName,
+      rate:pct(c.weighted),
+      type:c.eligible ? 'ES 대상 가능 — 정식 보고서 의뢰' : 'ES 대상 미충족 — 사전상담 요청',
+      contact:state.project.managerEmail || state.project.managerPhone
+    };
+    state.requests.unshift(item);
+    saveState();
+    render();
+    toast('보고서 의뢰 요청이 접수 목록에 추가되었습니다.');
+  }
+
+  function resetDemo(){
+    state = clone(defaultState);
+    saveState();
+    render();
+    toast('샘플 데이터로 초기화했습니다.');
+  }
+
+  function adminLogin(){
+    const pw = document.getElementById('adminPw')?.value;
+    if(pw === '0000'){
+      state.adminLogged = true;
+      saveState();
+      render();
+      toast('관리자 모드로 전환되었습니다. 비밀번호: 0000');
+    }else{
+      toast('관리자 비밀번호가 맞지 않습니다. 기본값은 0000입니다.');
+    }
+  }
+
+  function adminLogout(){
+    state.adminLogged = false;
+    saveState();
+    render();
+  }
+
+  function simulateOCR(){
+    state.project.projectName = '계약서 OCR 샘플공사';
+    state.project.client = '샘플건설';
+    state.project.demandOrg = '샘플 수요기관';
+    state.project.contractNo = 'OCR-2026-001';
+    state.project.contractDate = '2024-01-10';
+    state.project.bidDate = '2023-12-15';
+    state.project.baseDate = '2023-12-15';
+    saveState();
+    render();
+    toast('계약서/원가계산서 OCR 추출 샘플값을 입력했습니다.');
+  }
+
+  function exportJSON(){
+    const data = JSON.stringify({project:state.project,costItems:state.costItems,calc:calc()},null,2);
+    const blob = new Blob([data],{type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'esc-estimate-data.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function printResult(){
+    state.activeSection = 'print';
+    saveState();
+    render();
+    setTimeout(()=>window.print(),150);
+  }
+
+  function toast(msg){
+    let el = document.getElementById('toast');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'toast';
+      el.className = 'toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(window.__toastTimer);
+    window.__toastTimer = setTimeout(()=>el.classList.remove('show'),2400);
+  }
+
+  function header(){
+    const tabs = [
+      ['estimate','추정산출'],
+      ['db','지수 DB 구조'],
+      ['admin','관리자 모드'],
+      ['service','멤버십/의뢰'],
+      ['storage','저장·업로드'],
+      ['print','출력 화면']
+    ];
+    return `
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div class="brand">
+            <div class="brand-mark">ES</div>
+            <div>
+              <h1>ESC 추정산출 플랫폼</h1>
+              <p>CON-COST · 물가변동 대상 여부 사전검토</p>
+            </div>
+          </div>
+          <nav class="nav-tabs">
+            ${tabs.map(([id,label])=>`<button class="nav-tab ${state.activeSection===id?'active':''}" data-section="${id}">${label}</button>`).join('')}
+          </nav>
+          <div class="top-actions">
+            <button class="btn btn-ghost" id="btnSaveTop">저장</button>
+            <button class="btn btn-ghost" id="btnPrintTop">출력</button>
+          </div>
+        </div>
+      </header>
+    `;
+  }
+
+  function hero(){
+    const c = calc();
+    return `
+      <section class="hero">
+        <div class="hero-card">
+          <div class="hero-kicker">웹 공개용 1차 서비스</div>
+          <h2>현장이 ES 대상인지 접속 시점 기준으로 바로 확인합니다.</h2>
+          <p>
+            회의 내용 기준으로 정식 보고서 생성기가 아니라, 현장 담당자가 계약정보와 도급내역 금액을 입력하면
+            기준시점 대비 비교시점 지수 변동률을 계산하여 90일 경과와 3% 이상 여부를 동시에 판단하는 추정산출 플랫폼입니다.
+          </p>
+          <div class="hero-badges">
+            <span class="badge white">비교시점 기본값: 오늘</span>
+            <span class="badge white">90일 + 3% 동시 판단</span>
+            <span class="badge white">정식 보고서 의뢰 연결</span>
+            <span class="badge white">모바일 대응</span>
+          </div>
+        </div>
+        <aside class="status-card">
+          <h3>현재 샘플 산출 상태</h3>
+          <div class="status-list">
+            <div class="status-row"><span>계약 후 경과일</span><b>${c.passedDays}일</b></div>
+            <div class="status-row"><span>종합 조정률</span><b>${pct(c.weighted)}</b></div>
+            <div class="status-row"><span>90일 요건</span><span class="badge ${c.passed90?'green':'red'}">${c.passed90?'충족':'미충족'}</span></div>
+            <div class="status-row"><span>3% 요건</span><span class="badge ${c.passed3?'green':'orange'}">${c.passed3?'충족':'미달'}</span></div>
+            <div class="status-row"><span>판정</span><span class="badge ${c.eligible?'green':'orange'}">${c.eligible?'대상 가능':'검토 필요'}</span></div>
+          </div>
+        </aside>
+      </section>
+    `;
+  }
+
+  function estimateSection(){
+    const c = calc();
+    return `
+      <section id="estimate" class="section ${state.activeSection==='estimate'?'active':''}">
+        ${hero()}
+        <div class="process-steps">
+          <div class="step active"><b>1. 기본정보</b><span>계약서 주요 정보 입력 또는 OCR 업로드</span></div>
+          <div class="step active"><b>2. 도급내역 배분</b><span>원가 항목별 금액 직접 입력</span></div>
+          <div class="step active"><b>3. 지수 연동</b><span>DB/API 기준·비교 지수 호출</span></div>
+          <div class="step active"><b>4. 대상 판정</b><span>90일 경과 + 3% 이상 판단</span></div>
+          <div class="step"><b>5. 보고서 의뢰</b><span>대상 가능 시 전문 보고서 계약 연결</span></div>
+        </div>
+
+        <div class="grid side">
+          <aside class="card">
+            <div class="card-head">
+              <div><h2>계약 기본정보</h2><p>비교시점은 기본적으로 접속일 기준입니다.</p></div>
+              <span class="badge blue">사용자 입력</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                ${field('공사명','projectName',state.project.projectName)}
+                ${field('계약자/시공사','client',state.project.client)}
+                ${field('수요기관','demandOrg',state.project.demandOrg)}
+                ${field('계약번호','contractNo',state.project.contractNo)}
+                ${field('입찰일','bidDate',state.project.bidDate,'date')}
+                ${field('계약일','contractDate',state.project.contractDate,'date')}
+                ${field('기준시점','baseDate',state.project.baseDate,'date')}
+                ${field('비교시점','compareDate',state.project.compareDate,'date')}
+                ${field('담당자','managerName',state.project.managerName)}
+                ${field('연락처','managerPhone',state.project.managerPhone)}
+                ${field('이메일','managerEmail',state.project.managerEmail,'email')}
+              </div>
+              <div class="field" style="margin-top:14px">
+                <label>메모</label>
+                <textarea data-project="memo">${escapeHtml(state.project.memo)}</textarea>
+                <small>보고서 출력/의뢰 시 함께 전달되는 사전 검토 메모입니다.</small>
+              </div>
+              <div class="input-row" style="margin-top:14px">
+                <button class="btn btn-line" id="btnToday">비교시점 오늘로 설정</button>
+                <button class="btn btn-line" id="btnOCR">계약서 OCR 샘플 반영</button>
+              </div>
+            </div>
+          </aside>
+
+          <div class="grid">
+            <article class="card">
+              <div class="card-head">
+                <div><h2>도급내역 원가 배분</h2><p>각 계약자가 도급내역서상 원가 항목을 입력하면 지수별 상승률을 가중 계산합니다.</p></div>
+                <button class="btn btn-primary" id="btnAddCost">항목 추가</button>
+              </div>
+              <div class="card-body">
+                ${costTable()}
+              </div>
+            </article>
+            ${resultCard()}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function field(label,key,value,type='text'){
+    return `
+      <div class="field">
+        <label>${label}</label>
+        <input type="${type}" value="${escapeAttr(value)}" data-project="${key}">
+      </div>
+    `;
+  }
+
+  function costTable(){
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>원가 항목</th><th>자료 출처</th><th>업데이트</th><th>금액</th><th>기준 지수</th><th>비교 지수</th><th>상승률</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.costItems.map((item,i)=>`
+              <tr>
+                <td><input value="${escapeAttr(item.label)}" data-cost="${i}" data-key="label"></td>
+                <td><input value="${escapeAttr(item.source)}" data-cost="${i}" data-key="source"></td>
+                <td><input value="${escapeAttr(item.cycle)}" data-cost="${i}" data-key="cycle"></td>
+                <td><input type="number" value="${Number(item.amount||0)}" data-cost="${i}" data-key="amount"></td>
+                <td><input type="number" step="0.01" value="${Number(item.base||0)}" data-cost="${i}" data-key="base"></td>
+                <td><input type="number" step="0.01" value="${Number(item.current||0)}" data-cost="${i}" data-key="current"></td>
+                <td><b>${pct(itemRate(item))}</b></td>
+                <td><button class="btn btn-line" data-remove-cost="${i}">삭제</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+          <tfoot>
+            <tr><td colspan="3">도급 내역 합계</td><td>${won(calc().total)}</td><td colspan="2">가중 종합 조정률</td><td colspan="2">${pct(calc().weighted)}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+    `;
+  }
+
+  function resultCard(){
+    const c = calc();
+    const cls = c.eligible ? 'good' : c.passed3 ? 'warn' : 'bad';
+    const title = c.eligible ? 'ES 대상 가능' : c.passed3 ? '3%는 충족, 90일 검토 필요' : '현재는 대상 미충족';
+    const msg = c.eligible
+      ? '90일 경과와 3% 이상 요건을 모두 충족했습니다. 정식 보고서 의뢰 버튼을 통해 담당자 연결이 가능합니다.'
+      : '본 결과는 사전 추정입니다. 기준일·비교시점·원가 배분 금액과 지수 DB를 조정하여 재검토할 수 있습니다.';
+    return `
+      <article class="card" id="resultCard">
+        <div class="card-head">
+          <div><h2>추정산출 결과</h2><p>회의 기준: 90일 경과 + 3% 이상 동시 충족 여부 표시</p></div>
+          <span class="badge ${c.eligible?'green':'orange'}">${title}</span>
+        </div>
+        <div class="card-body">
+          <div class="result-panel">
+            <div class="result-judge ${cls}">
+              <h3>${title}</h3>
+              <p>${msg}</p>
+              <div class="hero-badges">
+                <span class="badge white">비교시점 ${state.project.compareDate}</span>
+                <span class="badge white">경과 ${c.passedDays}일</span>
+                <span class="badge white">조정률 ${pct(c.weighted)}</span>
+              </div>
+            </div>
+            <div class="result-metrics">
+              <div class="metric"><span>도급 입력 합계</span><b>${won(c.total)}</b></div>
+              <div class="metric"><span>예상 등락 금액</span><b>${won(c.estimatedAmount)}</b></div>
+              <div class="metric"><span>90일 경과</span><b>${c.passed90?'충족':'미충족'}</b></div>
+              <div class="metric"><span>3% 요건</span><b>${c.passed3?'충족':'미달'}</b></div>
+            </div>
+          </div>
+          <div class="notice ${c.eligible?'good':'warn'}" style="margin-top:14px">
+            공개 웹에서는 추정산출 결과만 제공합니다. 정식 보고서는 서버/인트라넷 또는 별도 산식 처리 환경에서 진행하는 2차 상품으로 연결하는 구조입니다.
+          </div>
+          <div class="input-row no-print" style="margin-top:14px">
+            <button class="btn btn-primary" id="btnRequest">보고서 의뢰하기</button>
+            <button class="btn btn-line" id="btnSave">로컬 저장</button>
+            <button class="btn btn-line" id="btnExport">JSON 내보내기</button>
+            <button class="btn btn-line" id="btnPrint">결과 출력</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
+  function dbSection(){
+    return `
+      <section id="db" class="section ${state.activeSection==='db'?'active':''}">
+        ${hero()}
+        <div class="grid two">
+          <article class="card">
+            <div class="card-head">
+              <div><h2>지수 DB 연동 구조</h2><p>회의에서 언급된 자동 API와 관리자 수기관리 항목을 구분합니다.</p></div>
+              <button class="btn btn-primary" id="btnSyncApi">PPI API 샘플 동기화</button>
+            </div>
+            <div class="card-body">
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>자료명</th><th>관리방식</th><th>주기</th><th>상태</th><th>비고</th></tr></thead>
+                  <tbody>
+                    ${state.dbSources.map((s,i)=>`
+                      <tr>
+                        <td><input value="${escapeAttr(s.name)}" data-source="${i}" data-key="name"></td>
+                        <td><input value="${escapeAttr(s.method)}" data-source="${i}" data-key="method"></td>
+                        <td><input value="${escapeAttr(s.cycle)}" data-source="${i}" data-key="cycle"></td>
+                        <td><input value="${escapeAttr(s.status)}" data-source="${i}" data-key="status"></td>
+                        <td><input value="${escapeAttr(s.note)}" data-source="${i}" data-key="note"></td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-head"><div><h2>갱신 주기 운영안</h2><p>수기관리 항목은 관리자 모드에서 반영합니다.</p></div></div>
+            <div class="card-body">
+              <div class="timeline">
+                <div class="timeline-item"><div class="timeline-date">매월</div><div class="timeline-text">한국은행 생산자물가지수(PPI), 재료비 관련 주요 지수 자동 API 연동</div></div>
+                <div class="timeline-item"><div class="timeline-date">연 2회</div><div class="timeline-text">노무비, 표준시장단가 관리자 수기 입력 및 검토</div></div>
+                <div class="timeline-item"><div class="timeline-date">연 1회</div><div class="timeline-text">기계경비, 재경비율 등 연초 발표 데이터 반영</div></div>
+                <div class="timeline-item"><div class="timeline-date">수시</div><div class="timeline-text">최저임금, 보험료, 노무비성 요인 변동 등 특수 이슈 발생 시 관리자 보정</div></div>
+              </div>
+              <div class="notice warn" style="margin-top:16px">
+                실제 API Key, DB 저장, 서버 호출은 백엔드에서 처리해야 합니다. 현재 화면은 프론트 기획/시연용 구조입니다.
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+    `;
+  }
+
+  function adminSection(){
+    return `
+      <section id="admin" class="section ${state.activeSection==='admin'?'active':''}">
+        ${state.adminLogged ? adminDashboard() : adminLoginView()}
+      </section>
+    `;
+  }
+
+  function adminLoginView(){
+    return `
+      <div class="admin-login">
+        <article class="card">
+          <div class="card-head"><div><h2>관리자 모드</h2><p>지수 DB 수기입력, API 연동 상태, 보고서 의뢰 접수 관리를 위한 영역입니다.</p></div><span class="badge gray">기본 PW 0000</span></div>
+          <div class="card-body">
+            <div class="field">
+              <label>관리자 비밀번호</label>
+              <input id="adminPw" type="password" placeholder="0000">
+              <small>시연용 기본 비밀번호는 0000입니다. 실제 서비스에서는 서버 인증으로 교체해야 합니다.</small>
+            </div>
+            <button class="btn btn-primary" id="btnAdminLogin" style="margin-top:14px">관리자 로그인</button>
+          </div>
+        </article>
+      </div>
+    `;
+  }
+
+  function adminDashboard(){
+    const menus = [['indices','지수관리'],['requests','의뢰접수'],['membership','멤버십'],['audit','관리이력']];
+    return `
+      <div class="admin-layout">
+        <aside class="card">
+          <div class="card-head"><h2>관리자</h2><button class="btn btn-line" id="btnAdminLogout">로그아웃</button></div>
+          <div class="card-body">
+            <div class="admin-menu">
+              ${menus.map(([id,label])=>`<button class="${state.adminTab===id?'active':''}" data-admin-tab="${id}">${label}</button>`).join('')}
+            </div>
+          </div>
+        </aside>
+        <div>
+          <div class="admin-panel ${state.adminTab==='indices'?'active':''}">
+            <article class="card">
+              <div class="card-head"><div><h2>관리자 지수 수기관리</h2><p>노무비·기계경비·표준시장단가 등 API가 없거나 수기 검토가 필요한 항목입니다.</p></div><button class="btn btn-primary" id="btnManualIndex">수기관리 확인</button></div>
+              <div class="card-body">${costTable()}</div>
+            </article>
+          </div>
+          <div class="admin-panel ${state.adminTab==='requests'?'active':''}">
+            <article class="card">
+              <div class="card-head"><div><h2>보고서 의뢰 접수</h2><p>대상 가능 현장에서 의뢰하기를 누르면 이 목록에 쌓이는 구조입니다.</p></div></div>
+              <div class="card-body">${requestTable()}</div>
+            </article>
+          </div>
+          <div class="admin-panel ${state.adminTab==='membership'?'active':''}">
+            ${membershipAdmin()}
+          </div>
+          <div class="admin-panel ${state.adminTab==='audit'?'active':''}">
+            <article class="card">
+              <div class="card-head"><h2>운영 이력</h2></div>
+              <div class="card-body">
+                <div class="timeline">
+                  <div class="timeline-item"><div class="timeline-date">2026-04-27</div><div class="timeline-text">회의 반영: 웹 공개 추정산출 + 정식 보고서 의뢰 연결 구조 확정</div></div>
+                  <div class="timeline-item"><div class="timeline-date">관리 항목</div><div class="timeline-text">노무비 연 2회, 기계경비 연 1회, PPI 매월 자동 연동 기준 반영</div></div>
+                  <div class="timeline-item"><div class="timeline-date">저장 방향</div><div class="timeline-text">대량 데이터는 웹 DB보다 내부 서버/로컬 서버 저장 검토</div></div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function requestTable(){
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>접수일</th><th>현장</th><th>조정률</th><th>요청유형</th><th>연락처</th></tr></thead>
+          <tbody>${state.requests.map(r=>`<tr><td>${r.date}</td><td>${escapeHtml(r.site)}</td><td>${r.rate}</td><td>${escapeHtml(r.type)}</td><td>${escapeHtml(r.contact)}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function membershipAdmin(){
+    return `
+      <article class="card">
+        <div class="card-head"><div><h2>멤버십 및 보고서 상품 구조</h2><p>월 2~3만원 멤버십 → 대상 확인 → 정식 보고서 의뢰 전환 흐름입니다.</p></div></div>
+        <div class="card-body">
+          <div class="form-grid two">
+            <div class="field"><label>기본 멤버십 월액</label><input type="number" value="${state.membership.basicPrice}" data-member="basicPrice"></div>
+            <div class="field"><label>프로 멤버십 월액</label><input type="number" value="${state.membership.proPrice}" data-member="proPrice"></div>
+            <div class="field"><label>일반 보고서 금액</label><input type="number" value="${state.membership.reportNormal}" data-member="reportNormal"></div>
+            <div class="field"><label>멤버십 보고서 금액</label><input type="number" value="${state.membership.reportMember}" data-member="reportMember"></div>
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
+  function serviceSection(){
+    return `
+      <section id="service" class="section ${state.activeSection==='service'?'active':''}">
+        ${hero()}
+        <article class="card">
+          <div class="card-head"><div><h2>서비스 전환 구조</h2><p>회의에서 나온 “월 멤버십 → 대상 확인 → 보고서 의뢰” 영업 흐름을 화면에 반영했습니다.</p></div></div>
+          <div class="card-body">
+            <div class="service-grid">
+              <div class="service-card">
+                <span class="badge blue">1단계</span>
+                <h3>월간 ES 확인 멤버십</h3>
+                <div class="price">${KRW.format(state.membership.basicPrice)}원</div>
+                <ul>
+                  <li>현장별 조정률 월간 확인</li>
+                  <li>모바일/PC 접속 가능</li>
+                  <li>3% 접근 시 알림 구조 확장 가능</li>
+                </ul>
+              </div>
+              <div class="service-card">
+                <span class="badge orange">2단계</span>
+                <h3>대상 가능 현장 관리</h3>
+                <div class="price">${KRW.format(state.membership.proPrice)}원</div>
+                <ul>
+                  <li>비교시점별 추정산출 저장</li>
+                  <li>담당자 연락처/이메일 확보</li>
+                  <li>영업 소스 자동 축적</li>
+                </ul>
+              </div>
+              <div class="service-card">
+                <span class="badge green">3단계</span>
+                <h3>정식 보고서 의뢰</h3>
+                <div class="price">${KRW.format(state.membership.reportMember)}원~</div>
+                <ul>
+                  <li>보고서 의뢰하기 버튼 연결</li>
+                  <li>담당자에게 메일/알림 접수</li>
+                  <li>본계약 및 정식 ES 보고서 진행</li>
+                </ul>
+              </div>
+            </div>
+            <div class="notice good" style="margin-top:16px">
+              공개 웹에서는 “대상이 되는지”를 확인하게 하고, 정확한 보고서가 필요한 사용자를 정식 계약으로 전환시키는 구조입니다.
+            </div>
+          </div>
+        </article>
+      </section>
+    `;
+  }
+
+  function storageSection(){
+    return `
+      <section id="storage" class="section ${state.activeSection==='storage'?'active':''}">
+        <div class="grid two">
+          <article class="card">
+            <div class="card-head"><div><h2>계약서 / 원가계산서 업로드</h2><p>사용자 입력을 줄이기 위한 OCR 흐름입니다. 현재는 샘플 추출 버튼으로 표현합니다.</p></div></div>
+            <div class="card-body">
+              <div class="upload-box">
+                <h3>계약서 · 원가계산서 파일 업로드</h3>
+                <p>계약서에서 공사명, 계약자, 수요기관, 계약일 등을 자동 추출하는 구조입니다.</p>
+                <div class="input-row" style="justify-content:center;margin-top:14px">
+                  <input type="file" id="docUpload" multiple>
+                  <button class="btn btn-primary" id="btnOCR2">OCR 샘플 추출</button>
+                </div>
+                <div class="file-list" id="fileList"></div>
+              </div>
+              <div class="notice warn" style="margin-top:16px">
+                실제 OCR은 서버 또는 브라우저 OCR 라이브러리 연동이 필요합니다. 현재 코드는 화면 설계와 데이터 흐름 검증용입니다.
+              </div>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-head"><div><h2>저장 구조</h2><p>회의 내용상 웹 DB보다 내부/로컬 서버 저장을 우선 검토하는 방향입니다.</p></div></div>
+            <div class="card-body">
+              <div class="timeline">
+                <div class="timeline-item"><div class="timeline-date">브라우저</div><div class="timeline-text">현재 시연본은 localStorage에 저장합니다. 새로고침해도 데이터 유지됩니다.</div></div>
+                <div class="timeline-item"><div class="timeline-date">운영 서버</div><div class="timeline-text">실제 운영 시 프로젝트, 담당자 연락처, 산출 결과를 내부 서버 DB에 저장합니다.</div></div>
+                <div class="timeline-item"><div class="timeline-date">영업 DB</div><div class="timeline-text">보고서 의뢰하기 클릭 시 담당자 연락처와 현장 정보를 영업 소스로 축적합니다.</div></div>
+              </div>
+              <div class="input-row" style="margin-top:16px">
+                <button class="btn btn-primary" id="btnSave2">현재 현장 저장</button>
+                <button class="btn btn-line" id="btnExport2">JSON 백업</button>
+              </div>
+              <h3 style="font-size:14px;color:var(--navy);margin:18px 0 10px">저장된 현장</h3>
+              ${savedProjectTable()}
+            </div>
+          </article>
+        </div>
+      </section>
+    `;
+  }
+
+  function savedProjectTable(){
+    if(!state.savedProjects.length) return `<div class="notice">저장된 현장이 없습니다.</div>`;
+    return `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>저장일</th><th>현장</th><th>발주/계약자</th><th>조정률</th><th>판정</th><th>예상금액</th></tr></thead>
+          <tbody>${state.savedProjects.map(p=>`<tr><td>${p.date}</td><td>${escapeHtml(p.projectName)}</td><td>${escapeHtml(p.client)}</td><td>${p.rate}</td><td>${p.eligible}</td><td>${p.amount}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function printSection(){
+    const c = calc();
+    return `
+      <section id="printSection" class="section ${state.activeSection==='print'?'active':''}">
+        <div class="print-sheet">
+          <h2>ESC 물가변동 추정산출 결과서</h2>
+          <div class="print-sub">주식회사 컨코스트 · 사전 검토용</div>
+          <div class="kpi-grid">
+            <div class="kpi-card"><span>종합 조정률</span><strong>${pct(c.weighted)}</strong></div>
+            <div class="kpi-card"><span>경과일수</span><strong>${c.passedDays}일</strong></div>
+            <div class="kpi-card"><span>예상 등락금액</span><strong>${won(c.estimatedAmount)}</strong></div>
+            <div class="kpi-card"><span>판정</span><strong>${c.eligible?'대상 가능':'검토 필요'}</strong></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <tbody>
+                <tr><th>공사명</th><td>${escapeHtml(state.project.projectName)}</td><th>계약자</th><td>${escapeHtml(state.project.client)}</td></tr>
+                <tr><th>수요기관</th><td>${escapeHtml(state.project.demandOrg)}</td><th>계약번호</th><td>${escapeHtml(state.project.contractNo)}</td></tr>
+                <tr><th>계약일</th><td>${state.project.contractDate}</td><th>비교시점</th><td>${state.project.compareDate}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          ${costTable()}
+          <div class="notice" style="margin-top:14px">
+            본 출력물은 추정산출용이며, 정식 ES 보고서는 별도 검토·계약·산식 검증 후 발행됩니다.
+          </div>
+          <div class="input-row no-print" style="margin-top:16px">
+            <button class="btn btn-line" data-section="estimate">추정산출로 돌아가기</button>
+            <button class="btn btn-primary" onclick="window.print()">인쇄</button>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function render(){
+    const root = document.getElementById('root');
+    root.innerHTML = `
+      <div class="app-shell">
+        ${header()}
+        <main class="main">
+          ${estimateSection()}
+          ${dbSection()}
+          ${adminSection()}
+          ${serviceSection()}
+          ${storageSection()}
+          ${printSection()}
+        </main>
+      </div>
+      <div id="toast" class="toast"></div>
+    `;
+    bind();
+  }
+
+  function renderResultOnly(){
+    saveState();
+  }
+
+  function bind(){
+    document.querySelectorAll('[data-section]').forEach(btn=>{
+      btn.addEventListener('click',()=>setSection(btn.dataset.section));
+    });
+    document.querySelectorAll('[data-project]').forEach(el=>{
+      el.addEventListener('input',()=>updateProject(el.dataset.project, el.value));
+      el.addEventListener('change',()=>updateProject(el.dataset.project, el.value));
+    });
+    document.querySelectorAll('[data-cost]').forEach(el=>{
+      el.addEventListener('change',()=>updateCost(Number(el.dataset.cost), el.dataset.key, el.value));
+    });
+    document.querySelectorAll('[data-remove-cost]').forEach(btn=>{
+      btn.addEventListener('click',()=>removeCostItem(Number(btn.dataset.removeCost)));
+    });
+    document.querySelectorAll('[data-source]').forEach(el=>{
+      el.addEventListener('change',()=>updateSource(Number(el.dataset.source), el.dataset.key, el.value));
+    });
+    document.querySelectorAll('[data-admin-tab]').forEach(btn=>{
+      btn.addEventListener('click',()=>setAdminTab(btn.dataset.adminTab));
+    });
+    document.querySelectorAll('[data-member]').forEach(el=>{
+      el.addEventListener('change',()=>{
+        state.membership[el.dataset.member] = Number(el.value) || 0;
+        saveState();
+        render();
+      });
+    });
+
+    const on = (id, fn) => { const el=document.getElementById(id); if(el) el.addEventListener('click',fn); };
+    on('btnAddCost', addCostItem);
+    on('btnToday', ()=>{ state.project.compareDate = todayISO; saveState(); render(); toast('비교시점을 오늘로 설정했습니다.'); });
+    on('btnOCR', simulateOCR);
+    on('btnOCR2', simulateOCR);
+    on('btnRequest', requestReport);
+    on('btnSave', saveProject);
+    on('btnSave2', saveProject);
+    on('btnSaveTop', saveProject);
+    on('btnExport', exportJSON);
+    on('btnExport2', exportJSON);
+    on('btnPrint', printResult);
+    on('btnPrintTop', printResult);
+    on('btnSyncApi', syncApiMock);
+    on('btnManualIndex', manualIndexUpdate);
+    on('btnAdminLogin', adminLogin);
+    on('btnAdminLogout', adminLogout);
+
+    const fileInput = document.getElementById('docUpload');
+    if(fileInput){
+      fileInput.addEventListener('change',()=>{
+        const list = document.getElementById('fileList');
+        list.innerHTML = Array.from(fileInput.files || []).map(f=>`<div class="file-item"><span>${escapeHtml(f.name)}</span><b>${KRW.format(f.size)} byte</b></div>`).join('');
+      });
+    }
+  }
+
+  function escapeHtml(v){
+    return String(v ?? '').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+  }
+  function escapeAttr(v){ return escapeHtml(v).replace(/"/g,'&quot;'); }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    render();
+    const manifest = {
+      name:'ESC 물가변동 추정산출 플랫폼',
+      short_name:'ESC 컨코스트',
+      start_url:'.',
+      display:'standalone',
+      background_color:'#f0f4f8',
+      theme_color:'#1e3a5f',
+      icons:[]
+    };
+    const blob = new Blob([JSON.stringify(manifest)],{type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const link = document.getElementById('pwa-manifest');
+    if(link) link.setAttribute('href',url);
+  });
+
+  window.ESC_APP = {
+    getState:()=>clone(state),
+    calc,
+    resetDemo,
+    saveProject,
+    requestReport
+  };
+})();
