@@ -13,6 +13,12 @@
     isOverThreePercent(rate){
       return U.toNumber(rate) >= 3;
     },
+    isSalesLead(rate, elapsedDays){
+      return U.toNumber(rate) >= 3 && U.toNumber(elapsedDays) >= 90;
+    },
+    estimateAdjustmentAmount(contractAmount, rate){
+      return Math.round(U.toNumber(contractAmount) * U.toNumber(rate) / 100);
+    },
     judgeEligibility({ baseDate, compareDate, rate }){
       const elapsedDays = U.diffDays(baseDate, compareDate);
       const passed90Days = elapsedDays >= 90;
