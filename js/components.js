@@ -99,7 +99,11 @@ const DC = {
   progressPlan: "",
   progressActual: "",
   preparedBy: "",
-  preparedDate: ""
+  preparedDate: "",
+  contactName: "",
+  contactPhone: "",
+  contactEmail: "",
+  requestMemo: ""
 };
 
 // ── 비목군 기본 구조 (PDF 원본) ───────────────────────────────────
@@ -1398,6 +1402,7 @@ const fmtD = (v, d = 4) => Number(v).toFixed(d);
 const days = (a, b) => !a || !b ? 0 : Math.floor((new Date(b) - new Date(a)) / 86400000);
 const fl4 = v => Math.floor(v * 10000) / 10000; // 소수점 5째자리 절사
 const toKey = d => d ? d.slice(0, 7).replace("-", "") : null; // "2023-11-15" → "202311"
+const todayYmd = () => new Date().toISOString().slice(0, 10);
 
 // 시계열 DB에서 기준/비교시점 지수 조회
 function getIdxFromTS(tsDB, indexId, bidDate, compareDate) {
@@ -1827,9 +1832,11 @@ function SetupWizard({
   const isEdit = !!initialData;
   const [step, setStep] = useState(0);
   const [d, setD] = useState(initialData ? {
-    ...initialData
+    ...initialData,
+    compareDate: initialData.compareDate || todayYmd()
   } : {
-    ...DC
+    ...DC,
+    compareDate: todayYmd()
   });
   const f = (k, v) => setD(p => ({
     ...p,
@@ -1856,11 +1863,28 @@ function SetupWizard({
   };
   const restoreOrig = () => {
     if (initialData) setD({
-      ...initialData
+      ...initialData,
+      compareDate: initialData.compareDate || todayYmd()
     });
   };
+  const applyTodayCompareDate = () => f("compareDate", todayYmd());
+  const applyDocumentSample = () => {
+    setD(p => ({
+      ...p,
+      projectName: p.projectName || "계약서 OCR 인식 공사명",
+      contractor: p.contractor || "계약자 자동 인식",
+      client: p.client || "수요기관 자동 인식",
+      contractAmount: p.contractAmount || "2224344990",
+      contractDate: p.contractDate || "2023-12-15",
+      startDate: p.startDate || "2023-12-15",
+      completionDate: p.completionDate || "2026-12-13",
+      bidDate: p.bidDate || "2023-11-15",
+      compareDate: p.compareDate || todayYmd()
+    }));
+    showToast("계약서/원가계산서 OCR 인식값을 기본정보에 반영했습니다.", "ok");
+  };
   const inp = (k, type = "text", step2, placeholder, hint, req = false) => /*#__PURE__*/React.createElement(FRow, {
-    label: k === "projectName" ? "공사명" : k === "contractor" ? "계약자" : k === "client" ? "수요기관" : k === "contractMethod" ? "계약방법" : k === "bidRate" ? "낙찰율(%)" : k === "contractAmount" ? "계약금액(원)" : k === "contractDate" ? "계약체결일" : k === "startDate" ? "착공일" : k === "completionDate" ? "준공예정일" : k === "bidDate" ? "입찰일 (기준시점)" : k === "compareDate" ? "조정기준일 (비교시점)" : k === "adjustNo" ? "조정 회차" : k === "thresholdRate" ? "등락율 기준(%)" : k === "thresholdDays" ? "경과기간 기준(일)" : k === "advanceAmt" ? "선금급(원)" : k === "excludedAmt" ? "적용제외금액(원)" : k === "preparedBy" ? "작성기관" : k === "preparedDate" ? "작성연월" : k,
+    label: k === "projectName" ? "공사명" : k === "contractor" ? "계약자" : k === "client" ? "수요기관" : k === "contractMethod" ? "계약방법" : k === "bidRate" ? "낙찰율(%)" : k === "contractAmount" ? "계약금액(원)" : k === "contractDate" ? "계약체결일" : k === "startDate" ? "착공일" : k === "completionDate" ? "준공예정일" : k === "bidDate" ? "입찰일 (기준시점)" : k === "compareDate" ? "조정기준일 (비교시점)" : k === "adjustNo" ? "조정 회차" : k === "thresholdRate" ? "등락율 기준(%)" : k === "thresholdDays" ? "경과기간 기준(일)" : k === "advanceAmt" ? "선금급(원)" : k === "excludedAmt" ? "적용제외금액(원)" : k === "preparedBy" ? "작성기관" : k === "preparedDate" ? "작성연월" : k === "contactName" ? "담당자명" : k === "contactPhone" ? "담당자 연락처" : k === "contactEmail" ? "담당자 이메일" : k === "requestMemo" ? "의뢰 메모" : k,
     required: req,
     hint: hint
   }, /*#__PURE__*/React.createElement(Inp, {
@@ -1984,6 +2008,50 @@ function SetupWizard({
     }
   }, "STEP ", step + 1), STEPS[step]), step === 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
+      background: "#f8fafc",
+      border: `1px dashed ${C.cy}`,
+      borderRadius: 8,
+      padding: "12px 14px",
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: C.txt,
+      marginBottom: 6
+    }
+  }, "문서 인식 기본정보 자동 입력"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: C.mut,
+      lineHeight: 1.6,
+      marginBottom: 10
+    }
+  }, "계약서와 원가계산서를 업로드하면 OCR/API 연동을 통해 공사명, 계약자, 수요기관, 계약금액, 계약일 등을 자동 입력하는 영역입니다. 현재 정적 웹에서는 샘플 인식값으로 동작합니다."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: mob ? "1fr" : "1fr 1fr auto",
+      gap: 8,
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement(Inp, {
+    type: "file",
+    onChange: () => {},
+    placeholder: "계약서 업로드"
+  }), /*#__PURE__*/React.createElement(Inp, {
+    type: "file",
+    onChange: () => {},
+    placeholder: "원가계산서 업로드"
+  }), /*#__PURE__*/React.createElement(Btn, {
+    v: "pri",
+    onClick: applyDocumentSample,
+    sx: {
+      fontSize: 11,
+      whiteSpace: "nowrap"
+    }
+  }, "OCR 샘플 반영"))), /*#__PURE__*/React.createElement("div", {
+    style: {
       display: "grid",
       gridTemplateColumns: mob ? "1fr" : "1fr 1fr",
       gap: "0 16px"
@@ -2064,7 +2132,11 @@ function SetupWizard({
       marginLeft: 8,
       fontSize: 11
     }
-  }, "\uC785\uCC30\uC77C ", d.bidDate, " \u2192 \uC870\uC815\uAE30\uC900\uC77C ", d.compareDate, " (", "\uAE30\uC900 90\uC77C", days(d.bidDate, d.compareDate) >= 90 ? " ✓ 충족" : " ✗ 미달", ")"))), inp("adjustNo", "number", "1", "", "조정 회차"), inp("thresholdRate", "number", "0.1", "3", "등락율 기준 (지방계약법: 3%)"), inp("thresholdDays", "number", "1", "90", "경과기간 기준 (90일)"), inp("advanceAmt", "number", "1", "", "선금급 지급액 (없으면 0)"), inp("excludedAmt", "number", "1", "", "물가변동 적용제외 금액"), inp("preparedDate", "text", "", "예) 2024-08", "작성 연월")), /*#__PURE__*/React.createElement("div", {
+  }, "\uC785\uCC30\uC77C ", d.bidDate, " \u2192 \uC870\uC815\uAE30\uC900\uC77C ", d.compareDate, " (", "\uAE30\uC900 90\uC77C", days(d.bidDate, d.compareDate) >= 90 ? " ✓ 충족" : " ✗ 미달", ")"))), inp("adjustNo", "number", "1", "", "조정 회차"), inp("thresholdRate", "number", "0.1", "3", "등락율 기준 (지방계약법: 3%)"), inp("thresholdDays", "number", "1", "90", "경과기간 기준 (90일)"), inp("advanceAmt", "number", "1", "", "선금급 지급액 (없으면 0)"), inp("excludedAmt", "number", "1", "", "물가변동 적용제외 금액"), inp("preparedDate", "text", "", "예) 2024-08", "작성 연월"), inp("contactName", "text", "", "영업/응대 담당자", "조정률 3% 이상 시 견적 의뢰 영역에 노출"), inp("contactPhone", "text", "", "010-0000-0000", "담당자 연락처"), inp("contactEmail", "email", "", "sales@concost.co.kr", "견적 의뢰 메일 수신 주소"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: "1/-1"
+    }
+  }, inp("requestMemo", "text", "", "본계약 유도용 안내 메모", "견적 의뢰 영역에 함께 표시"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: 8,
@@ -2140,7 +2212,37 @@ function CalcTab({
   const groups = [...new Set(items.map(it => it.g))];
   const missingBase = r.rows.filter(x => x.a > 0 && !x.baseOk);
   const missingComp = r.rows.filter(x => x.a > 0 && !x.compOk);
-  return /*#__PURE__*/React.createElement("div", null, (missingBase.length > 0 || missingComp.length > 0) && /*#__PURE__*/React.createElement("div", {
+  const estimateEligible = r.ok;
+  const contactEmail = ct.contactEmail || "sales@concost.co.kr";
+  const mailSubject = encodeURIComponent("[ESC 추정산출] 정식 보고서 견적 의뢰 - " + (ct.projectName || "현장명 미입력"));
+  const mailBody = encodeURIComponent(`공사명: ${ct.projectName || ""}
+계약자: ${ct.contractor || ""}
+수요기관: ${ct.client || ""}
+조정률: ${r.Kd2}%
+경과일수: ${r.el}일
+예상 조정금액: ${fmtW(r.adj)}원
+담당자: ${ct.contactName || ""}
+연락처: ${ct.contactPhone || ""}
+메모: ${ct.requestMemo || ""}`);
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#f8fafc",
+      border: `1px solid ${C.brd}`,
+      borderLeft: `4px solid ${C.cy}`,
+      borderRadius: 8,
+      padding: "12px 14px",
+      marginBottom: 14,
+      fontSize: 12,
+      color: C.txt,
+      lineHeight: 1.7
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 800,
+      color: C.txt,
+      marginBottom: 4
+    }
+  }, "회의 반영 요건"), "현재 화면은 정식 보고서 작성 전 단계의 ES 대상 여부 확인용 추정산출 화면입니다. 비교시점은 접속일 기준으로 자동 설정할 수 있으며, 90일 경과와 조정률 3% 이상을 동시에 충족하면 견적 의뢰로 연결합니다."), (missingBase.length > 0 || missingComp.length > 0) && /*#__PURE__*/React.createElement("div", {
     style: {
       background: "#7c2d12",
       border: `1px solid ${C.am}`,
