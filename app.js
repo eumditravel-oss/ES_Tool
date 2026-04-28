@@ -2197,7 +2197,7 @@ function SetupWizard({
       letterSpacing: "-0.5px",
       marginBottom: 6
     }
-  }, isEdit ? "✏️ 기본정보 수정" : "⚡ ESC 물가변동 조정 관리"), /*#__PURE__*/React.createElement("div", {
+  }, isEdit ? "✏️ 기본정보 수정" : "⚡ ESC 물가변동 추정산출 플랫폼"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: mob ? 12 : 13,
       color: C.mut
@@ -4240,10 +4240,105 @@ function ReportTab({
   }, ct.preparedBy)))));
 }
 
+
+
+// ═══════════════════════════════════════════════════════════════════
+// SERVICE DIRECTION TAB
+// - 회의 정리내용 반영: 추정산출 → 대상 판단 → 전문 보고서 의뢰 연결
+// ═══════════════════════════════════════════════════════════════════
+function ServiceTab({ ct, r, onMove }) {
+  const { mob } = useVPctx();
+  const e = React.createElement;
+  const cardStyle = {
+    background: C.pan,
+    border: `1px solid ${C.brd}`,
+    borderRadius: 12,
+    padding: mob ? 14 : 18,
+    boxShadow: "0 10px 30px #0f172a12"
+  };
+  const flow = [
+    ["1", "기본정보 입력", "공사명, 계약자, 수요기관, 입찰일, 계약일, 비교시점을 등록합니다."],
+    ["2", "계약금액 분개", "도급내역서 기준으로 노무비·재료비·경비 등 비목군 금액을 입력합니다."],
+    ["3", "지수 DB 비교", "기준시점과 비교시점의 지수를 불러와 등락률과 조정률을 계산합니다."],
+    ["4", "ES 대상 판단", "90일 경과 및 3% 이상 요건 충족 여부를 추정 기준으로 확인합니다."],
+    ["5", "보고서 의뢰 연결", "대상 가능성이 확인되면 전문 보고서 의뢰로 연결합니다."]
+  ];
+  const dbRows = [
+    ["한국은행 PPI / 재료비", "API 자동 연동 검토", "월 단위 갱신"],
+    ["노무비", "관리자 수동 입력", "연 2회 기준"],
+    ["기계경비", "관리자 수동 입력", "연 1회 기준"],
+    ["표준시장단가", "관리자 수동 입력", "연 2회 기준"],
+    ["재경비율", "관리자 수동 입력", "연 1회 또는 고시 변경 시"]
+  ];
+  const business = [
+    ["월 2~3만원 멤버십", "현장 담당자가 매월 ES 대상 여부를 직접 확인"],
+    ["대상 가능 시 CTA", "견적 의뢰 / 보고서 의뢰 버튼으로 컨코스트에 연결"],
+    ["영업 데이터 확보", "현장명, 담당자 연락처, 이메일, 계산 결과를 내부 영업 자료로 활용"],
+    ["정식 보고서 분리", "웹은 추정산출, 실제 발주처 제출용 보고서는 별도 계약"]
+  ];
+  return e("div", null,
+    e("div", { style: { display: "grid", gridTemplateColumns: mob ? "1fr" : "1.15fr .85fr", gap: 14, marginBottom: 14 } },
+      e("div", { style: { ...cardStyle, background: "linear-gradient(135deg,#1e3a5f,#0f172a)", color: "#f8fafc" } },
+        e("div", { style: { fontSize: 11, color: "#93c5fd", letterSpacing: 1.5, fontWeight: 800, marginBottom: 8 } }, "SERVICE DIRECTION"),
+        e("div", { style: { fontSize: mob ? 22 : 30, fontWeight: 900, lineHeight: 1.28, letterSpacing: "-0.7px", marginBottom: 12 } },
+          "현장이 ES 대상인지 실시간으로 확인하고,", e("br"), "대상 시 전문 보고서 계약으로 연결시키는 웹 플랫폼"
+        ),
+        e("div", { style: { fontSize: mob ? 12 : 13, color: "#cbd5e1", lineHeight: 1.8, maxWidth: 780 } },
+          "본 화면은 정식 보고서 자동 작성기가 아니라, 현장 담당자가 현재 시점의 물가변동 대상 여부를 빠르게 추정하고 대상 가능성이 있을 때 컨코스트의 전문 보고서 의뢰로 자연스럽게 이어지도록 구성한 사전 검토형 서비스입니다."
+        ),
+        e("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: 18 } },
+          e(Btn, { v: "pri", onClick: () => onMove("items") }, "비목 금액 입력"),
+          e(Btn, { v: "am", onClick: () => onMove("calc") }, "조정률 확인"),
+          e(Btn, { v: "def", onClick: () => onMove("rpt") }, "종합의견서 보기")
+        )
+      ),
+      e("div", { style: cardStyle },
+        e("div", { style: { fontSize: 13, color: C.cy, fontWeight: 800, marginBottom: 10 } }, "현재 현장 요약"),
+        e(CardRow, { label: "공사명", value: ct.projectName || "미입력" }),
+        e(CardRow, { label: "계약자", value: ct.contractor || "미입력" }),
+        e(CardRow, { label: "기준시점 → 비교시점", value: `${ct.bidDate || "-"} → ${ct.compareDate || "-"}` }),
+        e(CardRow, { label: "현재 조정률 K", value: r ? `${r.Kd2}%` : "계산 전", accent: r && r.ok ? C.gr : C.am }),
+        e(CardRow, { label: "판정", value: r ? (r.ok ? "추정상 ES 대상 가능" : "추정상 요건 미충족") : "입력 필요", accent: r && r.ok ? C.gr : C.mut }),
+        r && r.ok ? e("div", { style: { marginTop: 12, padding: 12, borderRadius: 10, background: "#ecfdf5", border: `1px solid ${C.gr}55`, color: "#166534", fontSize: 12, lineHeight: 1.7, fontWeight: 700 } },
+          "3% 및 90일 기준을 충족하는 것으로 산출되었습니다. 실제 보고서 작성, 증빙 검토, 발주처 제출용 산식 검증은 별도 전문 검토 단계로 연결하는 구조가 적합합니다."
+        ) : null
+      )
+    ),
+    e(Box, { title: "사용자 흐름", sub: "회의 반영 구조: 추정산출 → 대상 판단 → 보고서 의뢰" },
+      e("div", { style: { display: "grid", gridTemplateColumns: mob ? "1fr" : "repeat(5,1fr)", gap: 10 } },
+        flow.map(([no, title, desc]) => e("div", { key: no, style: { border: `1px solid ${C.brd}`, borderRadius: 10, padding: 12, background: "#fff" } },
+          e("div", { style: { width: 26, height: 26, borderRadius: "50%", background: "#dbeafe", color: "#1d4ed8", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontFamily: mono, marginBottom: 8 } }, no),
+          e("div", { style: { fontWeight: 800, fontSize: 13, color: C.txt, marginBottom: 6 } }, title),
+          e("div", { style: { fontSize: 11, color: C.dim, lineHeight: 1.7 } }, desc)
+        ))
+      )
+    ),
+    e("div", { style: { display: "grid", gridTemplateColumns: mob ? "1fr" : "1fr 1fr", gap: 14, marginTop: 14 } },
+      e(Box, { title: "DB 관리 방향", sub: "API 자동 연동 + 관리자 수동 입력 병행" },
+        e("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
+          e("tbody", null, dbRows.map(row => e("tr", { key: row[0] }, row.map((v, j) => e("td", { key: j, style: { padding: "8px 6px", borderBottom: `1px solid ${C.brd}`, color: j === 0 ? C.txt : C.dim, fontWeight: j === 0 ? 700 : 500 } }, v)))))
+        )
+      ),
+      e(Box, { title: "사업화 방향", sub: "저가 멤버십 + 전문 보고서 의뢰 전환" },
+        e("div", { style: { display: "grid", gap: 10 } },
+          business.map(([a, b]) => e("div", { key: a, style: { padding: 10, border: `1px solid ${C.brd}`, borderRadius: 9, background: "#fff" } },
+            e("div", { style: { fontWeight: 800, color: C.txt, fontSize: 12, marginBottom: 3 } }, a),
+            e("div", { style: { color: C.dim, fontSize: 11, lineHeight: 1.6 } }, b)
+          ))
+        )
+      )
+    )
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════════
 const TABS = [{
+  id: "service",
+  icon: "🏗️",
+  lbl: "서비스 방향"
+}, {
   id: "items",
   icon: "🔢",
   lbl: "비목 구성"
@@ -4262,7 +4357,7 @@ const TABS = [{
 }];
 function App() {
   const vp = useVP();
-  const [tab, setTab] = useState("items");
+  const [tab, setTab] = useState("service");
   const [ct, setCt] = useState(DC);
   const [items, setItems] = useState(DI);
   const [tsDB, setTsDB] = useState(DEFAULT_TS);
@@ -4329,8 +4424,8 @@ function App() {
     if (!setup) setItems(DI); // 최초 설정 시만 비목 리셋
     setSetup(true);
     setEditMode(false);
-    setTab("items");
-    showToast(editMode ? "기본정보가 수정됐습니다 ✓" : "설정 완료! 비목 금액을 입력하세요.");
+    setTab("service");
+    showToast(editMode ? "기본정보가 수정됐습니다 ✓" : "설정 완료! 서비스 방향을 확인한 뒤 비목 금액을 입력하세요.");
   };
   const openEditWizard = () => {
     setEditMode(true);
@@ -4429,7 +4524,7 @@ function App() {
       textOverflow: "ellipsis",
       whiteSpace: "nowrap"
     }
-  }, "\u26A1 ", ct.projectName || "ESC 물가변동 조정"), /*#__PURE__*/React.createElement("div", {
+  }, "\u26A1 ", ct.projectName || "ESC 물가변동 추정산출"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: vp.mob ? 10 : 11,
       color: C.mut,
@@ -4513,7 +4608,7 @@ function App() {
     v: "def",
     onClick: () => {
       setAdminMode(false);
-      if (tab === "tsdb") setTab("items");
+      if (tab === "tsdb") setTab("service");
     },
     sx: {
       padding: "3px 8px",
