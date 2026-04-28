@@ -10,6 +10,15 @@
     checkPassword(input){
       return String(input || "") === this.defaultPassword;
     },
+    getApiStatus(){
+      return {
+        material: "한국은행 PPI API 연동 예정",
+        overheadRate: "조달청 API 연동 검토",
+        labor: "파일 업로드/수기 입력",
+        equipment: "파일 업로드/수기 입력",
+        standardMarketUnitPrice: "파일 업로드/수기 입력"
+      };
+    },
     getUpdateCycle(type){
       const cycles = {
         labor: "연 2회",
