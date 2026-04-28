@@ -35,3 +35,9 @@
 
 .loading-title{font-size:14px;font-weight:700;color:#0369a1;letter-spacing:1px}
 .loading-subtitle{font-size:11px;color:#64748b}
+
+
+/* Meeting requirement additions: preserve existing UI, add only helper states */
+.es-request-highlight{background:#ecfdf5;border:1px solid #16a34a;border-radius:8px;padding:12px 14px;}
+.es-meeting-note{background:#f8fafc;border:1px solid #cbd5e1;border-left:4px solid #0ea5e9;border-radius:8px;padding:12px 14px;}
+@media (max-width:720px){.es-request-highlight,.es-meeting-note{font-size:12px;}}
